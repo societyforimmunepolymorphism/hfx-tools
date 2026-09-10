@@ -10,6 +10,7 @@ from .build import build_hfx_from_folder
 from .inspect import inspect_any
 from .pack import pack_hfx
 from .qc import qc_hfx
+from .reduce import DEFAULT_FREQ_TOLERANCE, reduce_loci_hfx
 
 
 def _add_pack_arguments(parser: argparse.ArgumentParser) -> None:
@@ -83,6 +84,31 @@ def _add_build_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_reduce_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="Input .hfx bundle (or metadata.json)")
+    parser.add_argument(
+        "--loci",
+        nargs="+",
+        required=True,
+        metavar="LOCUS",
+        help="Loci to retain, in output order (e.g. --loci A B DRB1 DQB1)",
+    )
+    parser.add_argument("-o", "--out", type=Path, required=True, help="Output .hfx path")
+    parser.add_argument("--no-manifest", action="store_true", help="Skip writing MANIFEST.json")
+    parser.add_argument(
+        "--hash",
+        choices=["md5", "sha256", "none"],
+        default="sha256",
+        help="Hash algorithm",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_FREQ_TOLERANCE,
+        help="Max allowed deviation between input and output total frequency",
+    )
+
+
 def _run_pack(args: argparse.Namespace) -> None:
     pack_hfx(
         metadata_json=args.metadata_json,
@@ -118,6 +144,25 @@ def _run_build(args: argparse.Namespace) -> None:
     )
     if not result["success"]:
         raise SystemExit(f"Build failed: {result.get('error', 'validation errors')}")
+
+
+def _run_reduce(args: argparse.Namespace) -> None:
+    hash_alg = None if args.hash == "none" else args.hash
+    result = reduce_loci_hfx(
+        input_path=args.input,
+        selected_loci=args.loci,
+        output_path=args.out,
+        write_manifest=not args.no_manifest,
+        hash_alg=hash_alg,
+        tolerance=args.tolerance,
+    )
+    print(
+        f"Reduced {result['source_loci']} -> {result['selected_loci']}: "
+        f"{result['n_input_haplotypes']} -> {result['n_output_haplotypes']} haplotypes "
+        f"(storage={result['storage']}, "
+        f"freq conservation error {result['frequency_conservation_error']:.3g})"
+    )
+    print(f"Wrote: {result['output_path']}")
 
 
 def pack_main(argv: Sequence[str] | None = None) -> None:
@@ -156,6 +201,16 @@ def build_main(argv: Sequence[str] | None = None) -> None:
     _run_build(parser.parse_args(argv))
 
 
+def reduce_main(argv: Sequence[str] | None = None) -> None:
+    """Run the standalone ``hfx-reduce-loci`` command."""
+    parser = argparse.ArgumentParser(
+        prog="hfx-reduce-loci",
+        description="Project an HFX to a subset of loci by marginalizing out omitted loci",
+    )
+    _add_reduce_arguments(parser)
+    _run_reduce(parser.parse_args(argv))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the subcommand-based interface used by direct Python callers."""
     parser = argparse.ArgumentParser(prog="hfx-tools")
@@ -176,6 +231,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     p_build = sub.add_parser("build", help="Build an HFX bundle from a folder")
     _add_build_arguments(p_build)
     p_build.set_defaults(handler=_run_build)
+
+    p_reduce = sub.add_parser(
+        "reduce-loci",
+        help="Project an HFX to a subset of loci by marginalizing out omitted loci",
+    )
+    _add_reduce_arguments(p_reduce)
+    p_reduce.set_defaults(handler=_run_reduce)
 
     args = parser.parse_args(argv)
     args.handler(args)

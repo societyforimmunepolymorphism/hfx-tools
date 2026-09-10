@@ -9,6 +9,7 @@ inspecting, and validating HFX documents, implementing the [HFX specification](h
 - **`pack`** - Pack HFX archives from metadata.json with optional manifests and checksums
 - **`qc`** - Compute quality control statistics
 - **`inspect`** - Inspect metadata or bundled HFX files
+- **`reduce-loci`** - Project an HFX onto a subset of loci by marginalizing out omitted loci
 - **Validation framework** - Extensible validation with built-in validators
 - **Streamlit UI** - Web-based interface for building HFX files
 
@@ -159,6 +160,76 @@ hfx-tools inspect example.hfx   # Equivalent generic command
 ```bash
 hfx-qc metadata.json --write-metadata --topk 10 100 1000
 ```
+
+### CLI: Reduce loci (marginalization)
+
+Project a multilocus HFX onto a subset of loci. Omitted loci are
+**marginalized out**: the frequency of each reduced haplotype is the **sum** of
+the frequencies of all source haplotypes that map to the same reduced
+haplotype.
+
+```bash
+hfx-tools reduce-loci nine_locus.hfx \
+    --loci A B DRB1 DQB1 \
+    -o four_locus.hfx
+
+# standalone convenience command (equivalent):
+hfx-reduce-loci nine_locus.hfx --loci A B DRB1 DQB1 -o four_locus.hfx
+```
+
+For example, two nine-locus haplotypes that differ only at omitted loci collapse
+into one four-locus haplotype whose frequency is the sum:
+
+```
+A*01:01~C*07:01~B*08:01~DRB1*03:01~DQB1*02:01   0.040
+A*01:01~C*07:02~B*08:01~DRB1*03:01~DQB1*02:01   0.025
+```
+
+reduced with `--loci A B DRB1 DQB1` becomes:
+
+```
+A*01:01~B*08:01~DRB1*03:01~DQB1*02:01           0.065
+```
+
+Key properties:
+
+- **Arbitrary reductions** - any subset of the source loci is supported
+  (9→8, 9→6, 9→4, 6→3, 4→2, ...). Requesting the full source locus set is a
+  scientific no-op (a new bundle is still produced).
+- **Locus order** - the output haplotypes follow the order given in `--loci`.
+- **Frequency conservation** - total frequency is preserved and checked; the
+  build fails if the input and output sums differ by more than `--tolerance`
+  (default `1e-6`). Frequencies are **not** renormalized.
+- **Storage style preserved** - CSV→CSV, Parquet→Parquet, inline→inline. There
+  is no silent conversion between storage styles, and non-standard column
+  headers declared via `metadata.frequencyFileHeader` are preserved.
+- **Metadata & provenance** - cohort, nomenclature, methodology, producer,
+  license, and header mappings are preserved. `metadata.outputResolution` is
+  restricted to the selected loci, and the projection is recorded in
+  `metadata.hfeMethod.parameters` (the schema provides no dedicated provenance
+  field, and forbids additional properties).
+- **Fresh manifests** - the new bundle gets newly generated `MANIFEST.json` and
+  checksums describing the reduced files.
+
+Options:
+- `--loci LOCUS [LOCUS ...]` - loci to retain, in output order (required)
+- `-o, --out PATH` - output `.hfx` path (required)
+- `--no-manifest` - skip `MANIFEST.json`
+- `--hash {md5,sha256,none}` - checksum algorithm (default: sha256)
+- `--tolerance FLOAT` - max allowed deviation between input/output total frequency
+
+Programmatic use:
+
+```python
+from hfx_tools.reduce import reduce_loci_hfx
+
+result = reduce_loci_hfx("nine_locus.hfx", ["A", "B", "DRB1", "DQB1"], "four_locus.hfx")
+print(result["n_input_haplotypes"], "->", result["n_output_haplotypes"])
+print("freq conservation error:", result["frequency_conservation_error"])
+```
+
+The projection math is also available as pure, I/O-free functions
+(`hfx_tools.reduce.project_haplotype`, `reduce_frequency_rows`) for direct reuse.
 
 ### Streamlit: Web UI
 
@@ -339,6 +410,7 @@ hfx_tools/
 ├── io.py              # JSON and file I/O
 ├── pack.py            # Low-level packing
 ├── qc.py              # Quality control
+├── reduce.py          # Locus reduction (marginalization / projection)
 ├── streamlit_app.py   # Web UI
 ├── util.py            # Utilities
 └── validators.py      # Validation framework

@@ -55,6 +55,7 @@ hfx-pack = "hfx_tools.cli:pack_main"
 hfx-qc = "hfx_tools.cli:qc_main"
 hfx-inspect = "hfx_tools.cli:inspect_main"
 hfx-build = "hfx_tools.cli:build_main"
+hfx-reduce-loci = "hfx_tools.cli:reduce_main"
 
 [tool.setuptools.packages.find]
 where = ["."]
